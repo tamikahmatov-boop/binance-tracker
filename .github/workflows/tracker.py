@@ -3,86 +3,72 @@ import time
 import requests
 from datetime import datetime
 
-# ============================================
-# ВСТАВЬТЕ СВОИ ДАННЫЕ СЮДА:
-# ============================================
 BOT_TOKEN = "8626739818:AAFt7kmdfTgTVlXD-5FnKOVYq1fvNW9hUAw"
 CHAT_ID = "6716942872"
-# ============================================
 
-THRESHOLD = 10
-HISTORY_FILE = 'history.json'
+print("START")
 
-def load_history():
-    try:
-        with open(HISTORY_FILE, 'r') as f:
-            return json.load(f)
-    except:
-        return {}
+# Получаем цены
+r = requests.get('https://api.binance.com/api/v3/ticker/price', timeout=15)
+prices = r.json()
+print("Prices loaded:", len(prices))
 
-def save_history(h):
-    with open(HISTORY_FILE, 'w') as f:
-        json.dump(h, f)
-
-def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, json={'chat_id': CHAT_ID, 'text': msg, 'parse_mode': 'HTML'}, timeout=10)
-
-print(f"Start: {datetime.now().strftime('%H:%M:%S')}")
-
+# История
 try:
-    prices = requests.get('https://api.binance.com/api/v3/ticker/price', timeout=15).json()
+    with open('history.json', 'r') as f:
+        history = json.load(f)
 except:
-    print("Error fetching prices")
-    exit(1)
+    history = {}
 
-print(f"Got {len(prices)} tickers")
-
-history = load_history()
 now = time.time()
-up_signals = []
-down_signals = []
+up_list = []
+down_list = []
 
 for item in prices:
-    symbol = item['symbol']
-    if not symbol.endswith('USDT'):
+    sym = item['symbol']
+    if not sym.endswith('USDT'):
         continue
     
-    try:
-        price = float(item['price'])
-    except:
-        continue
+    price = float(item['price'])
     
-    if symbol not in history:
-        history[symbol] = []
+    if sym not in history:
+        history[sym] = []
     
-    history[symbol].append({'t': now, 'p': price})
-    history[symbol] = [e for e in history[symbol] if e['t'] > now - 7200]
+    history[sym].append({'t': now, 'p': price})
     
-    if len(history[symbol]) >= 2:
-        old = history[symbol][0]['p']
-        age = (now - history[symbol][0]['t']) / 60
+    # Оставляем 2 часа
+    history[sym] = [x for x in history[sym] if x['t'] > now - 7200]
+    
+    if len(history[sym]) >= 2:
+        old_price = history[sym][0]['p']
+        age_min = (now - history[sym][0]['t']) / 60
         
-        if age >= 30:
-            change = (price - old) / old * 100
+        if age_min >= 30:
+            change = (price - old_price) / old_price * 100
             
-            if change >= THRESHOLD:
-                up_signals.append(f"🟢 {symbol}: +{change:.2f}%")
-            elif change <= -THRESHOLD:
-                down_signals.append(f"🔴 {symbol}: {change:.2f}%")
+            if change >= 10:
+                up_list.append(f"🟢 {sym}: +{change:.2f}%")
+            elif change <= -10:
+                down_list.append(f"🔴 {sym}: {change:.2f}%")
 
-save_history(history)
+# Сохраняем историю
+with open('history.json', 'w') as f:
+    json.dump(history, f)
 
-if up_signals or down_signals:
+# Отправка в Telegram
+if up_list or down_list:
     msg = f"📊 {datetime.now().strftime('%H:%M')}\n\n"
-    if up_signals:
-        msg += "🟢 РОСТ 10%+ за час:\n" + "\n".join(up_signals[:10])
-    if down_signals:
-        if up_signals:
-            msg += "\n\n"
-        msg += "🔴 ПАДЕНИЕ 10%+ за час:\n" + "\n".join(down_signals[:10])
     
-    send_telegram(msg)
-    print(f"Sent: {len(up_signals)} up, {len(down_signals)} down")
+    if up_list:
+        msg += "🟢 РОСТ 10%+ за час:\n" + "\n".join(up_list[:10])
+    
+    if down_list:
+        if up_list:
+            msg += "\n\n"
+        msg += "🔴 ПАДЕНИЕ 10%+ за час:\n" + "\n".join(down_list[:10])
+    
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.post(url, json={'chat_id': CHAT_ID, 'text': msg}, timeout=10)
+    print("SENT")
 else:
     print("No signals")
