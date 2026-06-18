@@ -1,0 +1,102 @@
+name: Binance 10% Tracker
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run tracker script
+        env:
+          BOT_TOKEN: ${{ 8626739818:AAFt7kmdfTgTVlXD-5FnKOVYq1fvNW9hUAw }}
+          CHAT_ID: ${{ 6716942872 }}
+        run: |
+          #!/bin/bash
+          
+          # Получаем цены
+          curl -s https://api.binance.com/api/v3/ticker/price > prices.json
+          
+          # Загружаем историю
+          if [ -f history.json ]; then
+            cp history.json old_history.json
+          else
+            echo '{}' > old_history.json
+          fi
+          
+          # Анализируем
+          cat > analyze.py << 'EOF'
+          import json, time, os
+          from datetime import datetime
+          
+          BOT_TOKEN = os.environ['BOT_TOKEN']
+          CHAT_ID = os.environ['CHAT_ID']
+          
+          with open('prices.json') as f:
+              prices = json.load(f)
+          
+          with open('old_history.json') as f:
+              history = json.load(f)
+          
+          now = time.time()
+          up = []
+          down = []
+          
+          for item in prices:
+              sym = item['symbol']
+              if not sym.endswith('USDT'):
+                  continue
+              
+              try:
+                  price = float(item['price'])
+              except:
+                  continue
+              
+              if sym not in history:
+                  history[sym] = []
+              
+              history[sym].append({'t': now, 'p': price})
+              history[sym] = [e for e in history[sym] if e['t'] > now - 7200]
+              
+              if len(history[sym]) >= 2:
+                  old_price = history[sym][0]['p']
+                  age_min = (now - history[sym][0]['t']) / 60
+                  
+                  if age_min >= 30:
+                      change = (price - old_price) / old_price * 100
+                      
+                      if change >= 10:
+                          up.append(f"🟢 {sym}: +{change:.2f}%")
+                      elif change <= -10:
+                          down.append(f"🔴 {sym}: {change:.2f}%")
+          
+          with open('history.json', 'w') as f:
+              json.dump(history, f)
+          
+          if up or down:
+              msg = f"📊 {datetime.now().strftime('%H:%M')}\\n\\n"
+              if up:
+                  msg += "🟢 РОСТ 10%+ за час:\\n" + "\\n".join(up[:10])
+              if down:
+                  if up:
+                      msg += "\\n\\n"
+                  msg += "🔴 ПАДЕНИЕ 10%+ за час:\\n" + "\\n".join(down[:10])
+              
+              import urllib.request
+              url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+              data = json.dumps({
+                  'chat_id': CHAT_ID,
+                  'text': msg.replace('\\n', '\n'),
+                  'parse_mode': 'HTML'
+              }).encode()
+              req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+              urllib.request.urlopen(req)
+              
+              print(f"Sent: {len(up)} up, {len(down)} down")
+          else:
+              print("No signals")
+          EOF
+          
+          python3 analyze.py
