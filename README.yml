@@ -14,26 +14,22 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
-          # Получаем цены с Binance
-          curl -s https://api.binance.com/api/v3/ticker/price > prices.json
+          # Скачиваем цены
+          curl -s https://api.binance.com/api/v3/ticker/price > /tmp/prices.json
           
-          # Создаём Python скрипт
-          cat > analyze.py << 'PYEOF'
-          import json
-          import time
-          import os
+          # Создаем Python скрипт
+          cat > /tmp/analyze.py << 'EOF'
+          import json, time, os
           from datetime import datetime
           
           BOT = os.environ['BOT_TOKEN']
           CHAT = os.environ['CHAT_ID']
           
-          # Загружаем цены
-          with open('prices.json') as f:
+          with open('/tmp/prices.json') as f:
               prices = json.load(f)
           
-          # Загружаем историю
           try:
-              with open('history.json') as f:
+              with open('/tmp/history.json') as f:
                   history = json.load(f)
           except:
               history = {}
@@ -56,16 +52,13 @@ jobs:
                   history[symbol] = []
               
               history[symbol].append({'t': now, 'p': price})
-              
-              # Удаляем старые записи (старше 2 часов)
               history[symbol] = [e for e in history[symbol] if e['t'] > now - 7200]
               
               if len(history[symbol]) >= 2:
                   old_price = history[symbol][0]['p']
-                  age_minutes = (now - history[symbol][0]['t']) / 60
+                  age_min = (now - history[symbol][0]['t']) / 60
                   
-                  # Проверяем только если есть 30+ минут данных
-                  if age_minutes >= 30:
+                  if age_min >= 30:
                       change = (price - old_price) / old_price * 100
                       
                       if change >= 10:
@@ -73,11 +66,9 @@ jobs:
                       elif change <= -10:
                           down_signals.append(f"🔴 {symbol}: {change:.2f}%")
           
-          # Сохраняем историю
-          with open('history.json', 'w') as f:
+          with open('/tmp/history.json', 'w') as f:
               json.dump(history, f)
           
-          # Отправляем уведомления
           if up_signals or down_signals:
               msg = f"📊 {datetime.now().strftime('%H:%M')}\n\n"
               
@@ -89,32 +80,20 @@ jobs:
                       msg += "\n\n"
                   msg += "🔴 ПАДЕНИЕ 10%+ за час:\n" + "\n".join(down_signals[:10])
               
-              # Отправка через Telegram API
               import urllib.request
-              telegram_url = f"https://api.telegram.org/bot{BOT}/sendMessage"
+              url = f"https://api.telegram.org/bot{BOT}/sendMessage"
               data = json.dumps({
                   'chat_id': CHAT,
                   'text': msg,
                   'parse_mode': 'HTML'
-              }).encode('utf-8')
+              }).encode()
               
-              req = urllib.request.Request(
-                  telegram_url,
-                  data=data,
-                  headers={'Content-Type': 'application/json'}
-              )
+              req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+              urllib.request.urlopen(req)
               
-              with urllib.request.urlopen(req) as response:
-                  result = json.loads(response.read())
-                  if result.get('ok'):
-                      print(f"✅ Отправлено: {len(up_signals)} ростов, {len(down_signals)} падений")
-                  else:
-                      print(f"❌ Ошибка Telegram: {result}")
+              print(f"Sent: {len(up_signals)} up, {len(down_signals)} down")
           else:
-              print("✅ Проверка пройдена. Сигналов нет.")
+              print("No signals")
+          EOF
           
-          print(f"📊 Монет в истории: {len(history)}")
-          PYEOF
-          
-          # Запускаем Python скрипт
-          python3 analyze.py
+          python3 /tmp/analyze.py
