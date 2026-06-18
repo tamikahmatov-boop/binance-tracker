@@ -7,46 +7,44 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - name: Run tracker script
+      - name: Run tracker
         env:
-          BOT_TOKEN: ${{ 8626739818:AAFt7kmdfTgTVlXD-5FnKOVYq1fvNW9hUAw }}
-          CHAT_ID: ${{ 6716942872 }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
-          #!/bin/bash
-          
-          # Получаем цены
+          # Получаем цены с Binance
           curl -s https://api.binance.com/api/v3/ticker/price > prices.json
           
-          # Загружаем историю
-          if [ -f history.json ]; then
-            cp history.json old_history.json
-          else
-            echo '{}' > old_history.json
-          fi
-          
-          # Анализируем
-          cat > analyze.py << 'EOF'
-          import json, time, os
+          # Создаём Python скрипт
+          cat > analyze.py << 'PYEOF'
+          import json
+          import time
+          import os
           from datetime import datetime
           
-          BOT_TOKEN = os.environ['BOT_TOKEN']
-          CHAT_ID = os.environ['CHAT_ID']
+          BOT = os.environ['BOT_TOKEN']
+          CHAT = os.environ['CHAT_ID']
           
+          # Загружаем цены
           with open('prices.json') as f:
               prices = json.load(f)
           
-          with open('old_history.json') as f:
-              history = json.load(f)
+          # Загружаем историю
+          try:
+              with open('history.json') as f:
+                  history = json.load(f)
+          except:
+              history = {}
           
           now = time.time()
-          up = []
-          down = []
+          up_signals = []
+          down_signals = []
           
           for item in prices:
-              sym = item['symbol']
-              if not sym.endswith('USDT'):
+              symbol = item['symbol']
+              if not symbol.endswith('USDT'):
                   continue
               
               try:
@@ -54,49 +52,69 @@ jobs:
               except:
                   continue
               
-              if sym not in history:
-                  history[sym] = []
+              if symbol not in history:
+                  history[symbol] = []
               
-              history[sym].append({'t': now, 'p': price})
-              history[sym] = [e for e in history[sym] if e['t'] > now - 7200]
+              history[symbol].append({'t': now, 'p': price})
               
-              if len(history[sym]) >= 2:
-                  old_price = history[sym][0]['p']
-                  age_min = (now - history[sym][0]['t']) / 60
+              # Удаляем старые записи (старше 2 часов)
+              history[symbol] = [e for e in history[symbol] if e['t'] > now - 7200]
+              
+              if len(history[symbol]) >= 2:
+                  old_price = history[symbol][0]['p']
+                  age_minutes = (now - history[symbol][0]['t']) / 60
                   
-                  if age_min >= 30:
+                  # Проверяем только если есть 30+ минут данных
+                  if age_minutes >= 30:
                       change = (price - old_price) / old_price * 100
                       
                       if change >= 10:
-                          up.append(f"🟢 {sym}: +{change:.2f}%")
+                          up_signals.append(f"🟢 {symbol}: +{change:.2f}%")
                       elif change <= -10:
-                          down.append(f"🔴 {sym}: {change:.2f}%")
+                          down_signals.append(f"🔴 {symbol}: {change:.2f}%")
           
+          # Сохраняем историю
           with open('history.json', 'w') as f:
               json.dump(history, f)
           
-          if up or down:
-              msg = f"📊 {datetime.now().strftime('%H:%M')}\\n\\n"
-              if up:
-                  msg += "🟢 РОСТ 10%+ за час:\\n" + "\\n".join(up[:10])
-              if down:
-                  if up:
-                      msg += "\\n\\n"
-                  msg += "🔴 ПАДЕНИЕ 10%+ за час:\\n" + "\\n".join(down[:10])
+          # Отправляем уведомления
+          if up_signals or down_signals:
+              msg = f"📊 {datetime.now().strftime('%H:%M')}\n\n"
               
+              if up_signals:
+                  msg += "🟢 РОСТ 10%+ за час:\n" + "\n".join(up_signals[:10])
+              
+              if down_signals:
+                  if up_signals:
+                      msg += "\n\n"
+                  msg += "🔴 ПАДЕНИЕ 10%+ за час:\n" + "\n".join(down_signals[:10])
+              
+              # Отправка через Telegram API
               import urllib.request
-              url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+              telegram_url = f"https://api.telegram.org/bot{BOT}/sendMessage"
               data = json.dumps({
-                  'chat_id': CHAT_ID,
-                  'text': msg.replace('\\n', '\n'),
+                  'chat_id': CHAT,
+                  'text': msg,
                   'parse_mode': 'HTML'
-              }).encode()
-              req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
-              urllib.request.urlopen(req)
+              }).encode('utf-8')
               
-              print(f"Sent: {len(up)} up, {len(down)} down")
+              req = urllib.request.Request(
+                  telegram_url,
+                  data=data,
+                  headers={'Content-Type': 'application/json'}
+              )
+              
+              with urllib.request.urlopen(req) as response:
+                  result = json.loads(response.read())
+                  if result.get('ok'):
+                      print(f"✅ Отправлено: {len(up_signals)} ростов, {len(down_signals)} падений")
+                  else:
+                      print(f"❌ Ошибка Telegram: {result}")
           else:
-              print("No signals")
-          EOF
+              print("✅ Проверка пройдена. Сигналов нет.")
           
+          print(f"📊 Монет в истории: {len(history)}")
+          PYEOF
+          
+          # Запускаем Python скрипт
           python3 analyze.py
