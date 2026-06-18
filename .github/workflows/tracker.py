@@ -1,11 +1,15 @@
 import json
-import os
 import time
 import requests
 from datetime import datetime
 
-BOT_TOKEN = os.environ['BOT_TOKEN']
-CHAT_ID = os.environ['CHAT_ID']
+# ============================================
+# ВСТАВЬТЕ СВОИ ДАННЫЕ СЮДА:
+# ============================================
+BOT_TOKEN = "8626739818:AAFt7kmdfTgTVlXD-5FnKOVYq1fvNW9hUAw"
+CHAT_ID = "6716942872"
+# ============================================
+
 THRESHOLD = 10
 HISTORY_FILE = 'history.json'
 
